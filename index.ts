@@ -1,5 +1,10 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, jsonSchema, stepCountIs, tool } from "ai";
+import {
+  generateText,
+  Experimental_Agent as Agent,
+  stepCountIs,
+  tool,
+} from "ai";
 import { SQL } from "bun";
 import z from "zod";
 
@@ -67,16 +72,21 @@ const tools = {
   }),
 };
 
+const OfferAgent = new Agent({
+  model: openai.responses("gpt-4o"),
+  system:
+    "You are a personal assistant. Currently you have access to the queryDatabase tool that can run read-only SQL queries against the database. Use it to answer questions about real estate offers. If you don't know the answer, just say you don't know. Never make up an answer.",
+  tools,
+  stopWhen: stepCountIs(10),
+});
+
 const server = Bun.serve({
   idleTimeout: 60,
   port: 3000,
   routes: {
     "/": async (req) => {
       req;
-      const response = await generateText({
-        model: openai.responses("gpt-4o"),
-        system:
-          "You are a personal assistant. Currently you have access to the queryDatabase tool that can run read-only SQL queries against the database. Use it to answer questions about real estate offers. If you don't know the answer, just say you don't know. Never make up an answer.",
+      const response = await OfferAgent.generate({
         messages: [
           {
             role: "user",
@@ -84,8 +94,6 @@ const server = Bun.serve({
               "What region is Bielsko-Biała in? List 5 offers from this Bielsko with area greater than 100 m2 and price more than 1,000,000 PLN. Show their titles, prices and area.",
           },
         ],
-        tools,
-        stopWhen: stepCountIs(10),
       });
 
       console.log("Final response:", response);

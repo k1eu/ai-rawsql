@@ -10,35 +10,76 @@ import z from "zod";
 
 const pg = new SQL(process.env.POSTGRES_URL!);
 
+async function checkAvailableTables() {
+  const [readableSchema] = await pg.unsafe(`
+    WITH readable_cols AS (
+  SELECT 
+      c.table_schema,
+      c.table_name,
+      c.column_name,
+      c.data_type,
+      c.is_nullable,
+      c.ordinal_position
+  FROM information_schema.columns c
+  WHERE 
+      c.table_schema = 'public'
+      AND c.table_name IN (
+          SELECT tablename
+          FROM pg_tables
+          WHERE has_table_privilege(format('%I.%I', schemaname, tablename), 'SELECT')
+            AND schemaname = 'public'
+            AND tablename <> 'spatial_ref_sys'
+      )
+      AND has_column_privilege(format('%I.%I', c.table_schema, c.table_name), c.column_name, 'SELECT')
+)
+, per_table AS (
+  SELECT 
+      table_schema,
+      table_name,
+      json_agg(
+        json_build_object(
+          'column',   column_name,
+          'type',     data_type,
+          'nullable', is_nullable
+        )
+        ORDER BY ordinal_position
+      ) AS cols
+  FROM readable_cols
+  GROUP BY table_schema, table_name
+)
+SELECT json_object_agg(
+         table_name,
+         cols
+       ) AS readable_schema
+FROM per_table;
+`);
+  console.dir(readableSchema, { depth: null });
+
+  return readableSchema;
+}
+
+await checkAvailableTables();
+
 const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
 const tools = {
+  discoverDatabaseSchema: tool({
+    description: "Discover available tables and their columns in the database.",
+    inputSchema: z.object({}),
+    async execute() {
+      const tables = await checkAvailableTables();
+
+      return tables;
+    },
+  }),
   queryDatabase: tool({
     description: [
       "Run read-only SQL queries against the offers database.",
-      "Schema:",
-      "Table name is `offer` ",
-      "```json",
-      `[{"column_name":"id","data_type":"uuid","character_maximum_length":null,"column_default":"gen_random_uuid()","is_nullable":"NO"},{"column_name":"deal_type","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"property_type","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"market_type","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"description","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"area_m2","data_type":"numeric","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"rooms","data_type":"smallint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"bathrooms","data_type":"smallint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"year_built","data_type":"smallint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"plot_area_m2","data_type":"numeric","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"floors_total","data_type":"smallint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"floor_position","data_type":"smallint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"has_certificate","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"building_type","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"material","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"material_other","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"plot_type","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"media_gas","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"media_internet","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"media_electricity","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"media_water","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"media_other","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"road_access","data_type":"smallint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"road_access_other","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"needs_renovation","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"has_basement","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"has_elevator","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"has_balcony","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"has_terrace","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"has_garden","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"no_maintenance_fee","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"separate_kitchen","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"two_storeys","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"has_garage","data_type":"boolean","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"region_id","data_type":"uuid","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"city_id","data_type":"uuid","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"street_name","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"building_no","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"unit_no","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"postal_code","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"location","data_type":"USER-DEFINED","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"created_at","data_type":"timestamp with time zone","character_maximum_length":null,"column_default":"CURRENT_TIMESTAMP","is_nullable":"NO"},{"column_name":"updated_at","data_type":"timestamp with time zone","character_maximum_length":null,"column_default":"CURRENT_TIMESTAMP","is_nullable":"NO"},{"column_name":"title","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"price_in_cents","data_type":"bigint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"commission_percent","data_type":"numeric","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"price_in_cents_per_m2","data_type":"bigint","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"country_region","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"}]`,
-      "```",
-      "Another table is `promoted_offer` which contains promoted offers.",
-      "```json",
-      `[{"column_name":"id","data_type":"uuid","character_maximum_length":null,"column_default":"gen_random_uuid()","is_nullable":"NO"},{"column_name":"offer_id","data_type":"uuid","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"position","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"created_at","data_type":"timestamp with time zone","character_maximum_length":null,"column_default":"CURRENT_TIMESTAMP","is_nullable":"NO"}]`,
-      "```",
-      "Use this table to find offers that are currently promoted.",
-      "Next One is `region` table which contains regions.",
-      "```json",
-      `[{"column_name":"id","data_type":"uuid","character_maximum_length":null,"column_default":"gen_random_uuid()","is_nullable":"NO"},{"column_name":"name","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"type","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"terc_woj","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"terc_pow","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"terc_gmi","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"terc_rodz","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"created_at","data_type":"timestamp with time zone","character_maximum_length":null,"column_default":"CURRENT_TIMESTAMP","is_nullable":"NO"},{"column_name":"updated_at","data_type":"timestamp with time zone","character_maximum_length":null,"column_default":"CURRENT_TIMESTAMP","is_nullable":"NO"}]`,
-      "```",
-      "Use this table to find region names by their IDs.",
-      "Another table is `city` which contains cities.",
-      "```json",
-      `[{"column_name":"id","data_type":"uuid","character_maximum_length":null,"column_default":"gen_random_uuid()","is_nullable":"NO"},{"column_name":"region_id","data_type":"uuid","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"name","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"NO"},{"column_name":"center_point","data_type":"USER-DEFINED","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"simc_sym","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"terc_woj","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"terc_pow","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"terc_gmi","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"},{"column_name":"terc_rodz","data_type":"text","character_maximum_length":null,"column_default":null,"is_nullable":"YES"}]`,
-      "```",
-      "Use this table to find city names by their IDs.",
-      "Only use the tables mentioned above. Do not make up any table or column names.",
+      "Schema can be found in the `discoverDatabaseSchema` tool.",
+      "Only use the tables that you got in the discovery step. Do not make up table or column names.",
+      "Before executing a query, make sure you already know the table and column names.",
       "Use JOINs to combine data from multiple tables when necessary.",
       "Try to limit the number of results returned by using WHERE and LIMIT clauses. (specifcally when user asks for a number of offers)",
       "--",
@@ -99,6 +140,10 @@ const server = Bun.serve({
       console.log("Final response:", response);
 
       return new Response(response.text);
+    },
+    "/check": async (req) => {
+      await checkAvailableTables();
+      return new Response("OK");
     },
   },
 });
